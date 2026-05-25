@@ -1,0 +1,64 @@
+{
+    "telegram": {
+        "bot_token": "",
+        "chat_id": ""
+    },
+    "strategy": {
+        "class_name": "ChanStrategy",
+        "strategy_name": "Chan_Auto",
+        "vt_symbol": "BTCUSDT_SWAP_OKX.GLOBAL",
+        "setting": {
+            "sizing_mode": "risk_per_trade",
+            "risk_per_trade": 0.10,
+            "atr_multiplier": 1.0,
+            "target_long_ratio": 0.05,
+            "capital": 10000,
+            "max_position": 0,
+            "max_position_ratio": 0.5,
+            "min_volume": 0.001,
+            "volume_step": 0.001,
+            "max_order_value": 5000,
+            "trade_enabled": false,
+            "min_stroke_gap": 1,
+            "strict_stroke": false,
+            "pivot_min_segments": 3,
+            "pivot_tolerance": 0,
+            "third_buy_pullback_tolerance": 0,
+            "second_buy_low_tolerance": 0,
+            "max_bars": 300,
+            "price_add": 0
+        }
+    },
+    "approval": {
+        "enabled": false,
+        "timeout_seconds": 300,
+        "auto_approve_after_hours": 0
+    },
+    "notification": {
+        "mode": "notify_only"
+    },
+    "runtime": {
+        "contract_timeout": 60,
+        "init_timeout": 180,
+        "tick_timeout": 60,
+        "init_days": 3
+    },
+    "backtest": {
+        "days": 365,
+        "interval": "1h",
+        "capital": 10000,
+        "rate": 0.0005,
+        "slippage": 0,
+        "size": 1,
+        "pricetick": 0.000001,
+        "trade_enabled": true
+    },
+    "risk": {
+        "enabled": true,
+        "account_currency": "USDT",
+        "max_daily_loss_pct": 0.01,
+        "max_drawdown_pct": 0.05,
+        "max_order_value_usdt": 5000.0,
+        "max_order_value_pct": 0.50
+    }
+}
