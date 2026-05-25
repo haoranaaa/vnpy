@@ -37,6 +37,19 @@ _templates
 # Misc
 .DS_Store
 *.mo
+.worktrees/
+.env
+.env.*
+config/trading_config.local.json
+*.pem
+*.key
+*secret*.json
+*secret*.yaml
+*secret*.yml
+cta_strategy_setting.json
+cta_strategy_data.json
+CLAUDE.md
+MVP_VERIFICATION_PLAN.md
 
 # Alpha
 lab/

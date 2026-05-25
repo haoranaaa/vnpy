@@ -8,13 +8,14 @@ from vnpy.trader.object import BarData
 from .manager import BarManager
 from .base import (
     GREY_COLOR, WHITE_COLOR, CURSOR_COLOR, BLACK_COLOR,
-    to_int, NORMAL_FONT
+    to_int, NORMAL_FONT, SAFE_CHART_RENDER
 )
 from .axis import DatetimeAxis
+from .zoom import compute_anchored_range
 from .item import ChartItem
 
 
-pg.setConfigOptions(antialias=True)
+pg.setConfigOptions(antialias=False, useOpenGL=False)
 
 
 class ChartWidget(pg.PlotWidget):
@@ -55,6 +56,9 @@ class ChartWidget(pg.PlotWidget):
 
     def add_cursor(self) -> None:
         """"""
+        if SAFE_CHART_RENDER:
+            return
+
         if not self._cursor:
             self._cursor = ChartCursor(
                 self, self._manager, self._plots, self._item_plot_map)
@@ -98,6 +102,8 @@ class ChartWidget(pg.PlotWidget):
         right_axis: pg.AxisItem = plot.getAxis("right")
         right_axis.setWidth(60)
         right_axis.tickFont = NORMAL_FONT
+        if SAFE_CHART_RENDER:
+            right_axis.setStyle(showValues=False)
 
         # Connect x-axis link
         if self._plots:
@@ -253,12 +259,43 @@ class ChartWidget(pg.PlotWidget):
         """
         Reimplement this method of parent to zoom in/out.
         """
-        delta: QtCore.QPoint = event.angleDelta()
+        if not self._first_plot:
+            return
 
-        if delta.y() > 0:
-            self._on_key_up()
-        elif delta.y() < 0:
-            self._on_key_down()
+        delta: QtCore.QPoint = event.angleDelta()
+        if delta.y() == 0:
+            return
+
+        view: pg.ViewBox = self._first_plot.getViewBox()
+        if hasattr(event, "position"):
+            pos = event.position().toPoint()
+        else:
+            pos = event.pos()
+        scene_pos = self.mapToScene(pos)
+        view_pos = view.mapSceneToView(scene_pos)
+        anchor_ix = int(view_pos.x())
+        left_ix = self._right_ix - self._bar_count
+        anchor_ix = max(left_ix, min(anchor_ix, self._right_ix))
+        anchor_ix = max(0, min(anchor_ix, self._manager.get_count()))
+
+        zoom_in = delta.y() > 0
+        max_bar_count = max(self.MIN_BAR_COUNT, self._manager.get_count())
+        new_right_ix, new_bar_count = compute_anchored_range(
+            right_ix=self._right_ix,
+            bar_count=self._bar_count,
+            anchor_ix=anchor_ix,
+            zoom_in=zoom_in,
+            min_bar_count=self.MIN_BAR_COUNT,
+            max_bar_count=max_bar_count
+        )
+
+        self._bar_count = new_bar_count
+        self._right_ix = max(new_right_ix, self._bar_count)
+        self._right_ix = min(self._right_ix, self._manager.get_count())
+        self._update_x_range()
+
+        if self._cursor:
+            self._cursor.update_info()
 
     def _on_key_left(self) -> None:
         """
@@ -342,6 +379,7 @@ class ChartCursor(QtCore.QObject):
         self._x: int = 0
         self._y: float = 0
         self._plot_name: str = ""
+        self._show_text_overlay: bool = not SAFE_CHART_RENDER
 
         self._init_ui()
         self._connect_signal()
@@ -349,8 +387,12 @@ class ChartCursor(QtCore.QObject):
     def _init_ui(self) -> None:
         """"""
         self._init_line()
-        self._init_label()
-        self._init_info()
+        self._y_labels: dict[str, pg.TextItem] = {}
+        self._x_label: pg.TextItem | None = None
+        self._infos: dict[str, pg.TextItem] = {}
+        if self._show_text_overlay:
+            self._init_label()
+            self._init_info()
 
     def _init_line(self) -> None:
         """
@@ -460,6 +502,9 @@ class ChartCursor(QtCore.QObject):
 
     def _update_label(self) -> None:
         """"""
+        if not self._show_text_overlay or not self._x_label:
+            return
+
         bottom_plot: pg.PlotItem = list(self._plots.values())[-1]
         axis_width = bottom_plot.getAxis("right").width()
         axis_height = bottom_plot.getAxis("bottom").height()
@@ -487,6 +532,9 @@ class ChartCursor(QtCore.QObject):
 
     def update_info(self) -> None:
         """"""
+        if not self._show_text_overlay:
+            return
+
         buf: dict = {}
 
         for item, plot in self._item_plot_map.items():
@@ -552,5 +600,8 @@ class ChartCursor(QtCore.QObject):
         for line in list(self._v_lines.values()) + list(self._h_lines.values()):
             line.hide()
 
-        for label in list(self._y_labels.values()) + [self._x_label]:
+        labels: list[pg.TextItem] = list(self._y_labels.values())
+        if self._x_label:
+            labels.append(self._x_label)
+        for label in labels:
             label.hide()
