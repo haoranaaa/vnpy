@@ -1,4 +1,4 @@
-from tests.chan_cases import make_basic_pivot_case, make_third_buy_case
+from chan_cases import make_basic_pivot_case, make_third_buy_case
 from vnpy.chan import BuyPointType, ChanAnalyzer, ChanConfig, ChanSnapshot, TrendState
 
 

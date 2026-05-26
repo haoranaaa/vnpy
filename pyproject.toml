@@ -96,7 +96,7 @@ select = [
 ignore = ["E501"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "qmt_test_strategy/tests"]
 markers = [
     "external: opt-in checks that contact real QMT, Telegram, or RD-Agent services",
 ]
