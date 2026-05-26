@@ -18,7 +18,7 @@
 1. 打开Telegram，搜索 @BotFather
 2. 发送 `/newbot` 创建新机器人
 3. 按提示设置名称和用户名
-4. 记录下：**Bot Token**（格式：`REDACTED_TELEGRAM_BOT_TOKEN`）
+4. 记录下：**Bot Token**，只保存到本地私有配置或环境变量
 5. 获取Chat ID：
    - 搜索你的机器人，发送一条消息
    - 访问 `https://api.telegram.org/bot<你的Token>/getUpdates`
@@ -26,21 +26,27 @@
 
 ### 2. 配置系统
 
-编辑 `config/trading_config.json`：
+保留 `config/trading_config.json` 中的凭据为空，只把真实 Token 写入本地私有配置：
+
+```bash
+cp config/trading_config.local.example.json config/trading_config.local.json
+```
+
+然后编辑 `config/trading_config.local.json`：
 
 ```json
 {
-    "okx": {
-        "api_key": "你的OKX API Key",
-        "api_secret": "你的OKX API Secret",
-        "passphrase": "你的OKX Passphrase",
-        "use_simulated": true,
-        "proxy": ""
-    },
     "telegram": {
         "bot_token": "你的Telegram Bot Token",
         "chat_id": "你的Chat ID"
-    },
+    }
+}
+```
+
+`config/trading_config.local.json` 已被 `.gitignore` 忽略，会覆盖公共配置里的空凭据。策略参数仍放在 `config/trading_config.json`：
+
+```json
+{
     "strategy": {
         "name": "DoubleMA",
         "vt_symbol": "BTC-USDT-SWAP.OKX",

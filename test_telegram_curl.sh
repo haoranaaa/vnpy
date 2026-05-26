@@ -1,4 +1,5 @@
 #!/bin/bash
+set +x
 
 echo "============================================================"
 echo "🧪 Telegram API 测试脚本"
@@ -32,10 +33,30 @@ if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
     exit 1
 fi
 
+telegram_get() {
+    local method="$1"
+    local query="${2:-}"
+    local url="https://api.telegram.org/bot${BOT_TOKEN}/${method}${query}"
+
+    curl -s --config - <<EOF
+url = "$url"
+EOF
+}
+
+telegram_post() {
+    local method="$1"
+    shift
+    local url="https://api.telegram.org/bot${BOT_TOKEN}/${method}"
+
+    curl -s -X POST --config - "$@" <<EOF
+url = "$url"
+EOF
+}
+
 # 1. 测试获取Bot信息
 echo "1️⃣ 测试获取Bot信息..."
-echo "   命令: curl -s https://api.telegram.org/bot${BOT_TOKEN:0:15}.../getMe"
-RESPONSE=$(curl -s "https://api.telegram.org/bot${BOT_TOKEN}/getMe")
+echo "   命令: curl -s --config -  # URL从stdin传入，Bot Token不出现在进程参数里"
+RESPONSE=$(telegram_get "getMe")
 echo "   响应: $RESPONSE"
 echo ""
 
@@ -53,9 +74,8 @@ echo ""
 echo "2️⃣ 测试发送消息到Chat ID: $CHAT_ID..."
 MESSAGE="🚀 自动交易系统测试%0A%0A✅ 配置加载成功%0A📊 交易对: DOGE-USDT-SWAP.OKX%0A⚙️ 策略: DoubleMA%0A   快线=18%0A   慢线=20%0A%0A⏳ 系统测试完成！"
 
-echo "   命令: curl -s -X POST https://api.telegram.org/bot.../sendMessage"
-RESPONSE=$(curl -s -X POST \
-    "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+echo "   命令: curl -s -X POST --config -  # URL从stdin传入，Bot Token不出现在进程参数里"
+RESPONSE=$(telegram_post "sendMessage" \
     -d "chat_id=${CHAT_ID}" \
     -d "text=🚀 自动交易系统测试
 
@@ -89,7 +109,7 @@ echo ""
 
 # 3. 获取更新（查看最近的消息）
 echo "3️⃣ 获取最近的聊天记录..."
-RESPONSE=$(curl -s "https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?limit=5")
+RESPONSE=$(telegram_get "getUpdates" "?limit=5")
 echo "   响应: $RESPONSE"
 echo ""
 
