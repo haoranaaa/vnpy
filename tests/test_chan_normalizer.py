@@ -1,4 +1,4 @@
-from tests.chan_cases import make_inclusion_case
+from chan_cases import make_inclusion_case
 from vnpy.chan import ChanBar
 from vnpy.chan.normalizer import normalize_bars
 

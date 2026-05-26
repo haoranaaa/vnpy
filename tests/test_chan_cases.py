@@ -1,6 +1,6 @@
 from collections.abc import Callable
 
-from tests.chan_cases import (
+from chan_cases import (
     make_basic_pivot_case,
     make_basic_segment_case,
     make_fractal_case,
