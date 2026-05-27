@@ -132,12 +132,12 @@ class DoubleMATelegramStrategy(CtaTemplate):
         try:
             import json
 
-            with open("config/backtest_result.json", "r") as f:
+            with open("config/backtest_result.json") as f:
                 self.backtest_report = json.load(f)
             self.write_log(
                 f"已加载回测报告: 收益 {self.backtest_report.get('total_return', 0):.2f}%"
             )
-        except:
+        except (OSError, json.JSONDecodeError):
             self.write_log("未找到回测报告，使用默认参数")
             self.backtest_report = {
                 "total_return": 0,
@@ -259,7 +259,7 @@ class DoubleMATelegramStrategy(CtaTemplate):
             volume_multiplier: 成交量倍数（平仓+开仓时为2）
         """
         self.trade_counter += 1
-        trade_id = f"TRADE_{self.trade_counter:04d}"
+        trade_id = f"{self.strategy_name}_TRADE_{self.trade_counter:04d}"
         if self.pending_trade_request:
             self.write_log(f"已有待处理交易请求，跳过新信号 #{trade_id}")
             return

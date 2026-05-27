@@ -11,6 +11,7 @@
             "slow_window": 20
         }
     },
+    "strategies": [],
     "approval": {
         "enabled": true,
         "timeout_seconds": 300,

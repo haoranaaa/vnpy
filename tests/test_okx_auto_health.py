@@ -190,6 +190,53 @@ def test_evaluate_health_allows_live_chan_with_empty_latest_signal_state(tmp_pat
     assert "Chan latest signal missing" not in result["reasons"]
 
 
+def test_evaluate_health_accepts_fresh_ticks_for_all_strategies(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "pid": 123,
+                "okx_server": "DEMO",
+                "contract_ready": True,
+                "strategy_inited": True,
+                "strategy_trading": True,
+                "strategies": {
+                    "DoubleMA_DOGE": {
+                        "vt_symbol": "DOGEUSDT_SWAP_OKX.GLOBAL",
+                        "inited": True,
+                        "trading": True,
+                    },
+                    "DoubleMA_BTC": {
+                        "vt_symbol": "BTCUSDT_SWAP_OKX.GLOBAL",
+                        "inited": True,
+                        "trading": True,
+                    },
+                },
+                "latest_ticks": {
+                    "DOGEUSDT_SWAP_OKX.GLOBAL": "2026-05-16T12:00:00+00:00",
+                    "BTCUSDT_SWAP_OKX.GLOBAL": "2026-05-16T12:00:10+00:00",
+                },
+                "latest_error": "",
+            }
+        )
+    )
+    pid_path = tmp_path / "run.pid"
+    pid_path.write_text("123")
+
+    result = evaluate_health(
+        state_path=state_path,
+        pid_path=pid_path,
+        now_iso="2026-05-16T12:00:30+00:00",
+        process_alive=lambda _pid: True,
+    )
+
+    assert result["status"] == "healthy"
+    assert result["tick_age_seconds"] == {
+        "DOGEUSDT_SWAP_OKX.GLOBAL": 30.0,
+        "BTCUSDT_SWAP_OKX.GLOBAL": 20.0,
+    }
+
+
 def test_evaluate_health_warns_live_chan_without_latest_signal_field(tmp_path: Path) -> None:
     state_path = tmp_path / "state.json"
     state_path.write_text(
@@ -219,3 +266,90 @@ def test_evaluate_health_warns_live_chan_without_latest_signal_field(tmp_path: P
 
     assert result["status"] == "degraded"
     assert "Chan latest signal missing" in result["reasons"]
+
+
+def test_evaluate_health_reports_missing_tick_for_one_strategy(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "pid": 123,
+                "okx_server": "DEMO",
+                "contract_ready": True,
+                "strategy_inited": True,
+                "strategy_trading": True,
+                "strategies": {
+                    "DoubleMA_DOGE": {
+                        "vt_symbol": "DOGEUSDT_SWAP_OKX.GLOBAL",
+                        "inited": True,
+                        "trading": True,
+                    },
+                    "DoubleMA_BTC": {
+                        "vt_symbol": "BTCUSDT_SWAP_OKX.GLOBAL",
+                        "inited": True,
+                        "trading": True,
+                    },
+                },
+                "latest_ticks": {
+                    "DOGEUSDT_SWAP_OKX.GLOBAL": "2026-05-16T12:00:00+00:00",
+                },
+                "latest_error": "",
+            }
+        )
+    )
+    pid_path = tmp_path / "run.pid"
+    pid_path.write_text("123")
+
+    result = evaluate_health(
+        state_path=state_path,
+        pid_path=pid_path,
+        now_iso="2026-05-16T12:00:30+00:00",
+        process_alive=lambda _pid: True,
+    )
+
+    assert result["status"] == "degraded"
+    assert "latest tick missing: BTCUSDT_SWAP_OKX.GLOBAL" in result["reasons"]
+
+
+def test_evaluate_health_reports_stopped_strategy_entry(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "pid": 123,
+                "okx_server": "DEMO",
+                "contract_ready": True,
+                "strategy_inited": True,
+                "strategy_trading": True,
+                "strategies": {
+                    "DoubleMA_DOGE": {
+                        "vt_symbol": "DOGEUSDT_SWAP_OKX.GLOBAL",
+                        "inited": True,
+                        "trading": True,
+                    },
+                    "DoubleMA_BTC": {
+                        "vt_symbol": "BTCUSDT_SWAP_OKX.GLOBAL",
+                        "inited": True,
+                        "trading": False,
+                    },
+                },
+                "latest_ticks": {
+                    "DOGEUSDT_SWAP_OKX.GLOBAL": "2026-05-16T12:00:00+00:00",
+                    "BTCUSDT_SWAP_OKX.GLOBAL": "2026-05-16T12:00:10+00:00",
+                },
+                "latest_error": "",
+            }
+        )
+    )
+    pid_path = tmp_path / "run.pid"
+    pid_path.write_text("123")
+
+    result = evaluate_health(
+        state_path=state_path,
+        pid_path=pid_path,
+        now_iso="2026-05-16T12:00:30+00:00",
+        process_alive=lambda _pid: True,
+    )
+
+    assert result["status"] == "degraded"
+    assert "strategy not trading: DoubleMA_BTC" in result["reasons"]

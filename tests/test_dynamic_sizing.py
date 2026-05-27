@@ -243,6 +243,55 @@ def test_opposite_signal_respects_reversal_cooldown(strategy) -> None:
     assert any("反向信号冷却中" in call.args[0] for call in strategy.write_log.call_args_list)
 
 
+def test_trade_request_id_includes_strategy_name(monkeypatch, strategy) -> None:
+    import double_ma_telegram_strategy
+
+    captured = []
+
+    class FakeTelegram:
+        loop = object()
+
+        def send_trade_signal(self, trade_id: str, _signal_info: dict) -> object:
+            captured.append(trade_id)
+            return object()
+
+    class FakeFuture:
+        def add_done_callback(self, _callback) -> None:
+            return None
+
+    monkeypatch.setattr(
+        double_ma_telegram_strategy.asyncio,
+        "run_coroutine_threadsafe",
+        lambda _coro, _loop: FakeFuture(),
+    )
+    strategy.strategy_name = "DoubleMA_DOGE"
+    strategy.runtime_config = {
+        "signal_cooldown_seconds": 0,
+        "reversal_cooldown_seconds": 0,
+    }
+    strategy.risk_config = {}
+    strategy.telegram = FakeTelegram()
+    strategy.trade_counter = 0
+    strategy.pending_trade_request = False
+    strategy.last_signal_at = {}
+    strategy.last_signal_direction = None
+    strategy.last_any_signal_at = None
+    strategy.fast_ma0 = 0.103
+    strategy.fast_ma1 = 0.102
+    strategy.slow_ma0 = 0.101
+    strategy.slow_ma1 = 0.103
+    strategy.pos = 0
+    strategy.backtest_report = {}
+    strategy._calc_dynamic_volume = MagicMock(return_value=10)
+    strategy._risk_notional_cap = MagicMock(return_value=1000)
+    strategy.write_log = MagicMock()
+    bar = SimpleNamespace(close_price=0.103, datetime=datetime(2026, 5, 20, 12, 0, 0))
+
+    strategy._send_trade_request(bar, "买入做多", 1, 0)
+
+    assert captured == ["DoubleMA_DOGE_TRADE_0001"]
+
+
 def test_order_notifications_skip_intermediate_status(strategy) -> None:
     strategy.telegram = object()
     strategy._submit_telegram_message = MagicMock()

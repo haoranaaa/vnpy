@@ -124,22 +124,45 @@ def evaluate_health(
 
     if state.get("okx_server") != "DEMO":
         reasons.append("not running on OKX DEMO")
+    strategies = state.get("strategies", {})
     if not state.get("contract_ready"):
         reasons.append("contract not ready")
-    if not state.get("strategy_inited"):
-        reasons.append("strategy not inited")
-    if not state.get("strategy_trading"):
-        reasons.append("strategy not trading")
+    if strategies:
+        for strategy_name, strategy_state in strategies.items():
+            if not strategy_state.get("inited"):
+                reasons.append(f"strategy not inited: {strategy_name}")
+            if not strategy_state.get("trading"):
+                reasons.append(f"strategy not trading: {strategy_name}")
+    else:
+        if not state.get("strategy_inited"):
+            reasons.append("strategy not inited")
+        if not state.get("strategy_trading"):
+            reasons.append("strategy not trading")
 
     now = _parse_iso(now_iso or datetime.now().astimezone().isoformat())
-    tick_time = _parse_iso(str(state.get("latest_tick_ts", "")))
-    tick_age = None
-    if now and tick_time:
-        tick_age = max(0.0, (now - tick_time).total_seconds())
-        if tick_age > MAX_TICK_AGE_SECONDS:
-            reasons.append("latest tick too old")
+    tick_age: float | dict[str, float] | None = None
+    if strategies:
+        latest_ticks = state.get("latest_ticks", {})
+        tick_ages: dict[str, float] = {}
+        for strategy_state in strategies.values():
+            vt_symbol = str(strategy_state.get("vt_symbol", ""))
+            tick_time = _parse_iso(str(latest_ticks.get(vt_symbol, "")))
+            if now and tick_time:
+                age = max(0.0, (now - tick_time).total_seconds())
+                tick_ages[vt_symbol] = age
+                if age > MAX_TICK_AGE_SECONDS:
+                    reasons.append(f"latest tick too old: {vt_symbol}")
+            else:
+                reasons.append(f"latest tick missing: {vt_symbol}")
+        tick_age = tick_ages
     else:
-        reasons.append("latest tick missing")
+        tick_time = _parse_iso(str(state.get("latest_tick_ts", "")))
+        if now and tick_time:
+            tick_age = max(0.0, (now - tick_time).total_seconds())
+            if tick_age > MAX_TICK_AGE_SECONDS:
+                reasons.append("latest tick too old")
+        else:
+            reasons.append("latest tick missing")
 
     if state.get("latest_error"):
         reasons.append("latest error present")

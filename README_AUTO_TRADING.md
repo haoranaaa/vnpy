@@ -49,12 +49,13 @@ cp config/trading_config.local.example.json config/trading_config.local.json
 {
     "strategy": {
         "name": "DoubleMA",
-        "vt_symbol": "BTC-USDT-SWAP.OKX",
+        "vt_symbol": "DOGEUSDT_SWAP_OKX.GLOBAL",
         "setting": {
-            "fast_window": 10,
+            "fast_window": 18,
             "slow_window": 20
         }
     },
+    "strategies": [],
     "approval": {
         "enabled": true,
         "timeout_seconds": 300,
@@ -100,8 +101,8 @@ python run_auto_trading.py
 ============================================================
 
 ✅ 已连接到OKX 模拟盘
-✅ 策略已添加: BTC-USDT-SWAP.OKX
-   参数: 快线=10, 慢线=20
+✅ 策略已添加: DoubleMA_Auto -> DOGEUSDT_SWAP_OKX.GLOBAL
+   参数: 快线=18, 慢线=20
 
 ✅ 系统启动完成！
 📱 Telegram已连接，交易信号将推送到你的手机
@@ -119,11 +120,11 @@ python run_auto_trading.py
 
 **2. 交易信号（需要确认）**
 ```
-🟢 交易信号 #TRADE_0001
+🟢 交易信号 #DoubleMA_Auto_TRADE_0001
 
 📊 策略信息
 ├ 策略: DoubleMA_Auto
-├ 品种: BTC-USDT-SWAP.OKX
+├ 品种: DOGEUSDT_SWAP_OKX.GLOBAL
 └ 时间: 2025-01-15 14:30:00
 
 ⚙️ 当前参数
@@ -148,8 +149,8 @@ python run_auto_trading.py
 ├ 数量: 1
 └ 当前持仓: 0
 
-回复 /approve TRADE_0001 确认
-回复 /reject TRADE_0001 拒绝
+回复 /approve DoubleMA_Auto_TRADE_0001 确认
+回复 /reject DoubleMA_Auto_TRADE_0001 拒绝
 ```
 
 **3. 成交通知**
@@ -176,12 +177,52 @@ python run_auto_trading.py
 
 ### 交易品种选择
 
-OKX支持的合约格式：`品种-USDT-SWAP.OKX`
+OKX自动交易使用 VeighNa 本地合约格式：`品种USDT_SWAP_OKX.GLOBAL`
 
 常见品种：
-- BTC-USDT-SWAP（比特币永续合约）
-- ETH-USDT-SWAP（以太坊永续合约）
-- SOL-USDT-SWAP（Solana永续合约）
+- `BTCUSDT_SWAP_OKX.GLOBAL`（比特币永续合约）
+- `ETHUSDT_SWAP_OKX.GLOBAL`（以太坊永续合约）
+- `DOGEUSDT_SWAP_OKX.GLOBAL`（DOGE永续合约）
+
+### 多品种交易
+
+默认的 `strategy` 字段保持单品种兼容。如果要同时交易多个品种，把
+`strategies` 设置为非空列表；系统会为每个条目创建独立 CTA 策略实例，
+每个实例独立订阅行情、计算信号、发 Telegram 消息和下单。
+
+```json
+"strategies": [
+    {
+        "strategy_name": "DoubleMA_DOGE",
+        "vt_symbol": "DOGEUSDT_SWAP_OKX.GLOBAL",
+        "setting": {
+            "fast_window": 18,
+            "slow_window": 20
+        }
+    },
+    {
+        "strategy_name": "DoubleMA_BTC",
+        "vt_symbol": "BTCUSDT_SWAP_OKX.GLOBAL",
+        "setting": {
+            "fast_window": 18,
+            "slow_window": 20
+        }
+    },
+    {
+        "strategy_name": "DoubleMA_ETH",
+        "vt_symbol": "ETHUSDT_SWAP_OKX.GLOBAL",
+        "setting": {
+            "fast_window": 18,
+            "slow_window": 20
+        }
+    }
+]
+```
+
+多品种时 `trading.position_ratio` 是每个策略实例都会使用的比例。比如
+`position_ratio=0.05` 且启用 3 个品种，极端情况下组合目标敞口可接近
+15%。模拟盘首次验证建议保持 `notification.mode=notify_only`、低杠杆和小
+`position_ratio`，并用 `tools/okx_auto_health.py` 检查每个品种都有新 tick。
 
 ### 策略参数调整
 
