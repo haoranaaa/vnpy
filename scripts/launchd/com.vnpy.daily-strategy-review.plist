@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.vnpy.daily-strategy-review</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/miaoyuhan/Project/vnpy</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/miaoyuhan/Project/vnpy/.venv/bin/python</string>
+    <string>/Users/miaoyuhan/Project/vnpy/tools/daily_strategy_review.py</string>
+    <string>--strategy</string>
+    <string>chan</string>
+    <string>--output-root</string>
+    <string>/Users/miaoyuhan/Project/vnpy/var/strategy_reviews</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>23</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/miaoyuhan/Project/vnpy/var/strategy_reviews/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/miaoyuhan/Project/vnpy/var/strategy_reviews/launchd.err.log</string>
+</dict>
+</plist>

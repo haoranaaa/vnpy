@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import asdict
 
 from vnpy.chan import BuySignal, ChanAnalyzer, ChanConfig, SellSignal
+from vnpy.trader.constant import Direction, Offset
 from vnpy.trader.position_sizing import PositionSizingRequest, calculate_position_size
+from vnpy_ctastrategy.execution import submit_cta_order
 from vnpy_ctastrategy import (
     BarData,
     BarGenerator,
@@ -138,7 +140,17 @@ class ChanStrategy(CtaTemplate):
                         self.write_log("缠论卖点清仓跳过: sizing returned zero volume")
                         self.put_event()
                         return
-                    self.sell(bar.close_price - self.price_add, close_volume)
+                    result = submit_cta_order(
+                        self,
+                        direction=Direction.SHORT,
+                        offset=Offset.CLOSE,
+                        price=bar.close_price - self.price_add,
+                        volume=close_volume,
+                        reason=f"chan sell signal {sell_signal.type.value}",
+                    )
+                    if not result.accepted:
+                        self.put_event()
+                        return
                     self.latest_signal_type = sell_signal.type.value
                     self.latest_signal_reason = sell_signal.reason
                     self.last_signal_key = signal_key
@@ -161,12 +173,14 @@ class ChanStrategy(CtaTemplate):
                 self.latest_signal_type = signal.type.value
                 self.latest_signal_reason = signal.reason
                 sizing = self._calculate_entry_sizing(bar, signal)
+                contract_size = self._contract_size()
                 self.latest_chan_signal = {
                     "signal_key": signal_key,
                     "type": signal.type.value,
                     "sizing_mode": self.sizing_mode,
                     "target_ratio": self.target_long_ratio,
                     "risk_per_trade": self.risk_per_trade,
+                    "contract_size": contract_size,
                     "candidate_index": signal.candidate_index,
                     "confirmed_index": signal.confirmed_index,
                     "stop_price": signal.stop_price,
@@ -203,7 +217,18 @@ class ChanStrategy(CtaTemplate):
                     self.put_event()
                     return
 
-                self.buy(bar.close_price + self.price_add, order_volume)
+                result = submit_cta_order(
+                    self,
+                    direction=Direction.LONG,
+                    offset=Offset.OPEN,
+                    price=bar.close_price + self.price_add,
+                    volume=order_volume,
+                    reason=f"chan buy signal {signal.type.value}",
+                )
+                if not result.accepted:
+                    self.put_event()
+                    return
+
                 self.active_stop_price = signal.stop_price
                 self.last_signal_key = signal_key
                 self.exit_order_sent = False
@@ -282,10 +307,19 @@ class ChanStrategy(CtaTemplate):
         if not self.active_stop_price or self.active_stop_orderid or self.pos <= 0:
             return
 
-        vt_orderids = self.sell(self.active_stop_price, abs(self.pos), stop=True)
-        self.active_stop_orderid = vt_orderids[0] if vt_orderids else ""
+        result = submit_cta_order(
+            self,
+            direction=Direction.SHORT,
+            offset=Offset.CLOSE,
+            price=self.active_stop_price,
+            volume=abs(self.pos),
+            reason="chan protective stop",
+            stop=True,
+        )
+        self.active_stop_orderid = result.vt_orderids[0] if result.vt_orderids else ""
         self.exit_order_sent = bool(self.active_stop_orderid)
-        self.write_log(f"缠论止损单已提交: {self.active_stop_price}")
+        if self.active_stop_orderid:
+            self.write_log(f"缠论止损单已提交: {self.active_stop_price}")
 
     def _calculate_entry_sizing(self, bar: BarData, signal: BuySignal):
         """Calculate entry sizing for non-fixed modes."""
@@ -303,6 +337,7 @@ class ChanStrategy(CtaTemplate):
                 stop_price=signal.stop_price,
                 atr=self.atr_value,
                 atr_multiplier=self.atr_multiplier,
+                contract_size=self._contract_size(),
                 min_volume=self.min_volume,
                 volume_step=self.volume_step,
                 max_position=self.max_position,
@@ -333,6 +368,7 @@ class ChanStrategy(CtaTemplate):
                 price=bar.close_price,
                 current_volume=self.pos,
                 equity=self.capital or 1,
+                contract_size=self._contract_size(),
                 min_volume=self.min_volume,
                 volume_step=self.volume_step,
                 max_position=self.max_position,
@@ -342,3 +378,11 @@ class ChanStrategy(CtaTemplate):
             )
         )
         return abs(sizing.order_volume)
+
+    def _contract_size(self) -> float:
+        """Return the contract multiplier used for notional sizing."""
+        try:
+            size = float(self.get_size() or 0)
+        except (AttributeError, TypeError, ValueError):
+            size = 0
+        return size if size > 0 else 1

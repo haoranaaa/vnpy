@@ -6,7 +6,6 @@ Telegram交易确认机器人
 import asyncio
 from concurrent.futures import Future
 from html import escape
-from typing import Optional
 from telegram import Bot, Update
 from telegram.ext import (
     Application,
@@ -29,6 +28,20 @@ def format_strategy_signal_message(
     bar_datetime = escape(str(signal.get("bar_datetime", "-")))
     stop_price = signal.get("stop_price", "-")
     close_price = signal.get("bar_close_price", "-")
+    contract_size = signal.get("contract_size", "-")
+    sizing = signal.get("sizing") or {}
+
+    sizing_lines = ""
+    if sizing:
+        sizing_lines = f"""
+
+📦 <b>仓位计划</b>
+├ 目标仓位: {escape(str(sizing.get("target_volume", "-")))}
+├ 下单数量: {escape(str(sizing.get("order_volume", "-")))}
+├ 合约乘数: {escape(str(contract_size))}
+├ 名义金额: {escape(str(sizing.get("order_value", "-")))}
+└ 限制原因: {escape(str(sizing.get("reason", "-")))}
+"""
 
     return f"""
 📡 <b>策略信号</b>
@@ -48,6 +61,25 @@ def format_strategy_signal_message(
 
 💡 <b>策略原因</b>
 {reason}
+{sizing_lines}
+    """.strip()
+
+
+def format_runtime_error_message(
+    strategy_name: str,
+    vt_symbol: str,
+    message: str,
+) -> str:
+    """Format an execution/runtime failure notification."""
+    return f"""
+⚠️ <b>自动交易异常</b>
+
+📊 <b>策略信息</b>
+├ 策略: {escape(str(strategy_name or "-"))}
+└ 品种: {escape(str(vt_symbol or "-"))}
+
+❌ <b>异常详情</b>
+{escape(str(message))[:1800]}
     """.strip()
 
 
@@ -60,10 +92,12 @@ class TelegramTradeBot:
 
         self.bot_token = config["telegram"]["bot_token"]
         self.chat_id = config["telegram"]["chat_id"]
-        self.mode = config.get("notification", {}).get("mode", "")
         self.approval_enabled = config["approval"]["enabled"]
-        if not self.mode:
-            self.mode = "approval_required" if self.approval_enabled else "notify_only"
+        configured_mode = config.get("notification", {}).get("mode", "")
+        if self.approval_enabled:
+            self.mode = configured_mode or "approval_required"
+        else:
+            self.mode = "notify_only"
         self.timeout = config["approval"]["timeout_seconds"]
 
         self.enabled = bool(self.bot_token and self.chat_id)
@@ -75,7 +109,7 @@ class TelegramTradeBot:
         self.approval_results: dict[str, bool] = {}
         # Set inside start() so strategies on other threads can schedule work via
         # asyncio.run_coroutine_threadsafe(coro, bot.loop).
-        self.loop: Optional[asyncio.AbstractEventLoop] = None
+        self.loop: asyncio.AbstractEventLoop | None = None
         self.application: Application | None = None
         self.polling: bool = False
 
@@ -309,7 +343,7 @@ class TelegramTradeBot:
             return False
         try:
             await asyncio.wait_for(event.wait(), timeout=self.timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await self.send_message(f"⏱ 交易 #{trade_id} 超时未确认，已取消")
             return False
 

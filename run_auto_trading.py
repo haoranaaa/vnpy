@@ -29,7 +29,11 @@ from vnpy_ctastrategy.strategies.double_ma_strategy import DoubleMaStrategy
 from vnpy_ctastrategy.strategies.chan_strategy import ChanStrategy
 
 from double_ma_telegram_strategy import DoubleMATelegramStrategy
-from telegram_notifier import TelegramTradeBot, format_strategy_signal_message
+from telegram_notifier import (
+    TelegramTradeBot,
+    format_runtime_error_message,
+    format_strategy_signal_message,
+)
 from trading_config import load_trading_config, resolve_trading_config_path
 
 
@@ -39,12 +43,69 @@ STRATEGY_NAME = "DoubleMA_Auto"
 GATEWAY_NAME = "OKX"
 STATE_FILENAME = "okx_auto_state.json"
 PID_FILENAME = "okx_auto_trading.pid"
+StrategySpec = dict[str, Any]
+RUNTIME_ERROR_NOTIFY_PATTERNS = (
+    "下单失败",
+    "委托失败",
+    "风控拒单",
+    "拒单",
+    "触发异常已停止",
+    "socket is already closed",
+)
 
 
 def apply_risk_settings(config: dict[str, Any]) -> None:
     """Overlay trading-config risk keys into vn.py global runtime settings."""
     for key, value in config.get("risk", {}).items():
         SETTINGS[f"risk.{key}"] = value
+
+
+def get_strategy_specs(config: dict[str, Any]) -> list[StrategySpec]:
+    """Return normalized CTA strategy specs from single or multi config."""
+    def normalize_strategy(raw: dict[str, Any], index: int | None = None) -> StrategySpec:
+        prefix = f"strategies[{index}]" if index is not None else "strategy"
+        class_name = str(raw.get("class_name") or TELEGRAM_STRATEGY_CLASS_NAME)
+        strategy_name = str(raw.get("strategy_name") or STRATEGY_NAME).strip()
+        vt_symbol = str(raw.get("vt_symbol") or "").strip()
+        setting = dict(raw.get("setting", {}))
+        if not strategy_name:
+            raise ValueError(f"{prefix} missing strategy_name")
+        if not vt_symbol:
+            raise ValueError(f"{prefix} missing vt_symbol")
+        if class_name == CHAN_STRATEGY_CLASS_NAME and "init_days" not in setting:
+            runtime_init_days = config.get("runtime", {}).get("init_days")
+            if runtime_init_days is not None:
+                setting["init_days"] = int(runtime_init_days)
+        return {
+            "class_name": class_name,
+            "strategy_name": strategy_name,
+            "vt_symbol": vt_symbol,
+            "setting": setting,
+        }
+
+    raw_strategies = config.get("strategies")
+    if raw_strategies:
+        specs: list[StrategySpec] = []
+        seen_names: set[str] = set()
+        seen_symbols: set[str] = set()
+        for index, raw in enumerate(raw_strategies, start=1):
+            spec = normalize_strategy(raw, index)
+            strategy_name = spec["strategy_name"]
+            vt_symbol = spec["vt_symbol"]
+            if not strategy_name:
+                raise ValueError(f"strategies[{index}] missing strategy_name")
+            if not vt_symbol:
+                raise ValueError(f"strategies[{index}] missing vt_symbol")
+            if strategy_name in seen_names:
+                raise ValueError(f"duplicate strategy_name: {strategy_name}")
+            if vt_symbol in seen_symbols:
+                raise ValueError(f"duplicate vt_symbol: {vt_symbol}")
+            seen_names.add(strategy_name)
+            seen_symbols.add(vt_symbol)
+            specs.append(spec)
+        return specs
+
+    return [normalize_strategy(config["strategy"])]
 
 
 def build_okx_connect_config(
@@ -111,56 +172,43 @@ def is_strategy_config_match(
 
 def get_strategy_spec(config: dict[str, Any]) -> dict[str, Any]:
     """Return normalized managed strategy config."""
-    strategy_config = config["strategy"]
-    class_name = strategy_config.get("class_name", TELEGRAM_STRATEGY_CLASS_NAME)
-    setting = dict(strategy_config.get("setting", {}))
-    if class_name == CHAN_STRATEGY_CLASS_NAME and "init_days" not in setting:
-        runtime_init_days = config.get("runtime", {}).get("init_days")
-        if runtime_init_days is not None:
-            setting["init_days"] = int(runtime_init_days)
-
-    return {
-        "class_name": class_name,
-        "strategy_name": strategy_config.get("strategy_name", STRATEGY_NAME),
-        "vt_symbol": strategy_config["vt_symbol"],
-        "setting": setting,
-    }
+    return get_strategy_specs(config)[0]
 
 
 def validate_strategy_safety(config: dict[str, Any]) -> None:
     """Reject unsafe auto-trading strategy configurations."""
-    spec = get_strategy_spec(config)
-    if spec["class_name"] != CHAN_STRATEGY_CLASS_NAME:
-        return
+    for spec in get_strategy_specs(config):
+        if spec["class_name"] != CHAN_STRATEGY_CLASS_NAME:
+            continue
 
-    setting = spec["setting"]
-    if not bool(setting.get("trade_enabled", True)):
-        return
+        setting = spec["setting"]
+        if not bool(setting.get("trade_enabled", True)):
+            continue
 
-    risk_config = config.get("risk", {})
-    if not risk_config.get("enabled", False):
-        raise ValueError("ChanStrategy live trading requires risk.enabled=true")
-    has_position_cap = any(
-        float(setting.get(key, 0) or 0) > 0
-        for key in ("max_position", "max_position_value", "max_position_ratio")
-    )
-    if not has_position_cap:
-        raise ValueError(
-            "ChanStrategy live trading requires setting.max_position, "
-            "setting.max_position_value, or setting.max_position_ratio"
+        risk_config = config.get("risk", {})
+        if not risk_config.get("enabled", False):
+            raise ValueError("ChanStrategy live trading requires risk.enabled=true")
+        has_position_cap = any(
+            float(setting.get(key, 0) or 0) > 0
+            for key in ("max_position", "max_position_value", "max_position_ratio")
         )
-    if float(risk_config.get("max_order_value_usdt", 0) or 0) <= 0:
-        raise ValueError("ChanStrategy live trading requires risk.max_order_value_usdt")
-    if float(risk_config.get("max_daily_loss_pct", 0) or 0) <= 0:
-        raise ValueError("ChanStrategy live trading requires risk.max_daily_loss_pct")
+        if not has_position_cap:
+            raise ValueError(
+                "ChanStrategy live trading requires setting.max_position, "
+                "setting.max_position_value, or setting.max_position_ratio"
+            )
+        if float(risk_config.get("max_order_value_usdt", 0) or 0) <= 0:
+            raise ValueError("ChanStrategy live trading requires risk.max_order_value_usdt")
+        if float(risk_config.get("max_daily_loss_pct", 0) or 0) <= 0:
+            raise ValueError("ChanStrategy live trading requires risk.max_daily_loss_pct")
 
-    sizing_mode = str(setting.get("sizing_mode", "fixed"))
-    if sizing_mode == "risk_per_trade":
-        if float(setting.get("risk_per_trade", 0) or 0) <= 0:
-            raise ValueError("ChanStrategy risk_per_trade sizing requires setting.risk_per_trade")
-    elif sizing_mode == "target_ratio":
-        if float(setting.get("target_long_ratio", 0) or 0) <= 0:
-            raise ValueError("ChanStrategy target_ratio sizing requires setting.target_long_ratio")
+        sizing_mode = str(setting.get("sizing_mode", "fixed"))
+        if sizing_mode == "risk_per_trade":
+            if float(setting.get("risk_per_trade", 0) or 0) <= 0:
+                raise ValueError("ChanStrategy risk_per_trade sizing requires setting.risk_per_trade")
+        elif sizing_mode == "target_ratio":
+            if float(setting.get("target_long_ratio", 0) or 0) <= 0:
+                raise ValueError("ChanStrategy target_ratio sizing requires setting.target_long_ratio")
 
 
 def format_strategy_label(strategy_config: dict[str, Any]) -> str:
@@ -232,6 +280,8 @@ class AutoTradingSystem:
         # 加载配置
         self.config = load_trading_config(config_path)
         validate_strategy_safety(self.config)
+        self.strategy_specs: list[StrategySpec] = get_strategy_specs(self.config)
+        self.strategy_symbols: set[str] = {spec["vt_symbol"] for spec in self.strategy_specs}
         apply_risk_settings(self.config)
 
         self.okx_config_path = okx_config_path
@@ -251,22 +301,41 @@ class AutoTradingSystem:
         self.contract_timeout = float(self.config.get("runtime", {}).get("contract_timeout", 30))
         self.tick_timeout = float(self.config.get("runtime", {}).get("tick_timeout", 30))
         self.init_timeout = float(self.config.get("runtime", {}).get("init_timeout", 60))
+        self.last_notified_strategy_signal_key = ""
+        self.last_notified_runtime_error_key = ""
         self.state: dict[str, Any] = {
             "pid": os.getpid(),
             "started_at": datetime.now().astimezone().isoformat(),
             "okx_server": "",
             "simulated": None,
             "contract_ready": False,
-            "strategy_name": get_strategy_spec(self.config)["strategy_name"],
-            "strategy_class": get_strategy_spec(self.config)["class_name"],
+            "strategy_name": self.strategy_specs[0]["strategy_name"],
+            "strategy_names": [spec["strategy_name"] for spec in self.strategy_specs],
+            "strategy_class": self.strategy_specs[0]["class_name"],
+            "strategy_classes": {
+                spec["strategy_name"]: spec["class_name"] for spec in self.strategy_specs
+            },
             "strategy_inited": False,
             "strategy_trading": False,
-            "strategy_trade_enabled": get_strategy_spec(self.config)["setting"].get("trade_enabled", True),
+            "strategy_trade_enabled": self.strategy_specs[0]["setting"].get("trade_enabled", True),
             "latest_chan_signal": {},
+            "strategies": {
+                spec["strategy_name"]: {
+                    "class_name": spec["class_name"],
+                    "vt_symbol": spec["vt_symbol"],
+                    "inited": False,
+                    "trading": False,
+                    "contract_ready": False,
+                    "trade_enabled": spec["setting"].get("trade_enabled", True),
+                }
+                for spec in self.strategy_specs
+            },
             "latest_tick_ts": "",
+            "latest_ticks": {},
             "latest_order_ts": "",
             "latest_trade_ts": "",
             "latest_account_ts": "",
+            "latest_prices": {},
             "latest_error": "",
             "risk": {},
         }
@@ -313,21 +382,22 @@ class AutoTradingSystem:
         cta_engine.classes[CHAN_STRATEGY_CLASS_NAME] = ChanStrategy
         cta_engine.init_engine()
 
-        # 策略配置 (配置文件中已使用正确的格式: DOGEUSDT_SWAP_OKX.GLOBAL)
-        strategy_spec = get_strategy_spec(self.config)
-        vt_symbol = strategy_spec["vt_symbol"]
-        self.wait_for_contract(vt_symbol, timeout=self.contract_timeout)
+        for spec in self.strategy_specs:
+            self.wait_for_contract(spec["vt_symbol"], timeout=self.contract_timeout)
         self.wait_for_gateway_api("public_api", timeout=self.contract_timeout)
 
-        self.upsert_strategy(cta_engine)
+        for spec in self.strategy_specs:
+            self.upsert_strategy(cta_engine, spec)
 
-        symbol, exchange = extract_vt_symbol(vt_symbol)
-        req = SubscribeRequest(symbol=symbol, exchange=exchange)
-        self.main_engine.subscribe(req, GATEWAY_NAME)
+            vt_symbol = spec["vt_symbol"]
+            symbol, exchange = extract_vt_symbol(vt_symbol)
+            req = SubscribeRequest(symbol=symbol, exchange=exchange)
+            self.main_engine.subscribe(req, GATEWAY_NAME)
 
-        print(f"✅ 策略已添加: {vt_symbol}")
-        print(f"   策略: {strategy_spec['strategy_name']} ({strategy_spec['class_name']})")
-        print(f"   参数: {strategy_spec['setting']}")
+            setting = spec["setting"]
+            print(f"✅ 策略已添加: {spec['strategy_name']} -> {vt_symbol}")
+            print(f"   策略: {format_strategy_label({**spec, 'setting': setting})}")
+            print(f"   参数: {setting}")
 
     def register_state_handlers(self) -> None:
         """Register handlers that persist process health state for schedulers."""
@@ -349,9 +419,13 @@ class AutoTradingSystem:
         now = datetime.now().astimezone().isoformat()
         data = event.data
         if event.type.startswith(EVENT_TICK):
-            if getattr(data, "vt_symbol", "") == get_strategy_spec(self.config)["vt_symbol"]:
+            vt_symbol = getattr(data, "vt_symbol", "")
+            if vt_symbol in self.strategy_symbols:
                 self.state["latest_tick_ts"] = now
-                self.state["latest_price"] = getattr(data, "last_price", 0)
+                self.state["latest_ticks"][vt_symbol] = now
+                latest_price = getattr(data, "last_price", 0)
+                self.state["latest_price"] = latest_price
+                self.state["latest_prices"][vt_symbol] = latest_price
         elif event.type.startswith(EVENT_ORDER):
             self.state["latest_order_ts"] = now
             self.state["latest_order_status"] = getattr(getattr(data, "status", None), "value", "")
@@ -363,6 +437,8 @@ class AutoTradingSystem:
             msg = getattr(data, "msg", "")
             if any(pattern in msg for pattern in ["failed", "失败", "Exception", "拒单", "Wrong", "Insufficient"]):
                 self.state["latest_error"] = msg[:500]
+            if self._should_notify_runtime_error(msg):
+                self.notify_runtime_error(msg)
 
         self.state["risk"] = self.risk_engine.snapshot()
         self.capture_strategy_state()
@@ -372,24 +448,34 @@ class AutoTradingSystem:
         """Persist strategy-specific observable state."""
         try:
             cta_engine = self.main_engine.get_engine("CtaStrategy")
-            strategy_spec = get_strategy_spec(self.config)
-            strategy_name = strategy_spec["strategy_name"]
-            strategy = cta_engine.strategies.get(strategy_name)
         except Exception:  # noqa: BLE001
             return
-
-        if not strategy:
+        if cta_engine is None:
             return
 
-        self.state["strategy_trade_enabled"] = getattr(strategy, "trade_enabled", True)
-        latest_signal = getattr(strategy, "latest_chan_signal", None)
-        if latest_signal:
-            self.state["latest_chan_signal"] = latest_signal
-            self.notify_strategy_signal(
-                strategy_name,
-                strategy_spec["vt_symbol"],
-                latest_signal,
-            )
+        for strategy_spec in self.strategy_specs:
+            strategy_name = strategy_spec["strategy_name"]
+            strategy = cta_engine.strategies.get(strategy_name)
+            if not strategy:
+                continue
+
+            trade_enabled = getattr(strategy, "trade_enabled", True)
+            strategy_state = self.state.get("strategies", {}).get(strategy_name)
+            if strategy_state is not None:
+                strategy_state["trade_enabled"] = trade_enabled
+            if strategy_name == self.state.get("strategy_name"):
+                self.state["strategy_trade_enabled"] = trade_enabled
+
+            latest_signal = getattr(strategy, "latest_chan_signal", None)
+            if latest_signal:
+                self.state["latest_chan_signal"] = latest_signal
+                if strategy_state is not None:
+                    strategy_state["latest_chan_signal"] = latest_signal
+                self.notify_strategy_signal(
+                    strategy_name,
+                    strategy_spec["vt_symbol"],
+                    latest_signal,
+                )
 
     def notify_strategy_signal(
         self,
@@ -409,13 +495,44 @@ class AutoTradingSystem:
         except Exception as exc:  # noqa: BLE001
             self.state["latest_error"] = f"strategy signal notification failed: {exc}"
 
+    def _should_notify_runtime_error(self, msg: str) -> bool:
+        """Return whether a runtime log line needs an operator alert."""
+        return any(pattern in msg for pattern in RUNTIME_ERROR_NOTIFY_PATTERNS)
+
+    def notify_runtime_error(self, msg: str) -> None:
+        """Send a deduplicated runtime failure notification."""
+        error_key = msg[:500]
+        if not error_key or error_key == self.last_notified_runtime_error_key:
+            return
+
+        self.last_notified_runtime_error_key = error_key
+        strategy_name = str(self.state.get("strategy_name", ""))
+        vt_symbol = ""
+        strategy_state = self.state.get("strategies", {}).get(strategy_name, {})
+        if isinstance(strategy_state, dict):
+            vt_symbol = str(strategy_state.get("vt_symbol", ""))
+        if not vt_symbol and self.strategy_specs:
+            vt_symbol = str(self.strategy_specs[0].get("vt_symbol", ""))
+
+        message = format_runtime_error_message(strategy_name, vt_symbol, msg)
+        try:
+            self.telegram.submit_message(message)
+        except Exception as exc:  # noqa: BLE001
+            self.state["latest_error"] = f"runtime error notification failed: {exc}"
+
     def wait_for_contract(self, vt_symbol: str, timeout: float, interval: float = 0.2):
         """Wait until OKX contract metadata is available."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             contract = self.main_engine.get_contract(vt_symbol)
             if contract:
-                self.state["contract_ready"] = True
+                strategy_entry = self._strategy_entry_by_symbol(vt_symbol)
+                if strategy_entry is not None:
+                    strategy_entry["contract_ready"] = True
+                self.state["contract_ready"] = all(
+                    item.get("contract_ready")
+                    for item in self.state.get("strategies", {}).values()
+                )
                 self.write_state()
                 return contract
             time.sleep(interval)
@@ -454,13 +571,21 @@ class AutoTradingSystem:
         self.write_state()
         raise TimeoutError(f"OKX {api_name} not connected")
 
-    def upsert_strategy(self, cta_engine) -> None:
+    def _strategy_entry_by_symbol(self, vt_symbol: str) -> dict[str, Any] | None:
+        """Return mutable strategy state entry for a symbol."""
+        for item in self.state.get("strategies", {}).values():
+            if item.get("vt_symbol") == vt_symbol:
+                return item
+        return None
+
+    def upsert_strategy(self, cta_engine, strategy_config: StrategySpec | None = None) -> None:
         """Create or replace the managed CTA strategy with desired settings."""
-        strategy_spec = get_strategy_spec(self.config)
-        strategy_name = strategy_spec["strategy_name"]
-        class_name = strategy_spec["class_name"]
-        vt_symbol = strategy_spec["vt_symbol"]
-        setting = strategy_spec["setting"]
+        if strategy_config is None:
+            strategy_config = self.strategy_specs[0]
+        class_name = strategy_config["class_name"]
+        strategy_name = strategy_config["strategy_name"]
+        vt_symbol = strategy_config["vt_symbol"]
+        setting = strategy_config["setting"]
         existing = cta_engine.strategies.get(strategy_name)
 
         if existing and not is_strategy_config_match(
@@ -487,24 +612,35 @@ class AutoTradingSystem:
         if hasattr(strategy, "telegram"):
             strategy.telegram = self.telegram
 
-    async def init_and_start_strategy(self) -> None:
-        """Initialize and start strategy with explicit readiness checks."""
+    async def init_and_start_strategies(self) -> None:
+        """Initialize and start all managed strategies with readiness checks."""
         cta_engine = self.main_engine.get_engine("CtaStrategy")
-        strategy_name = get_strategy_spec(self.config)["strategy_name"]
-        future = cta_engine.init_strategy(strategy_name)
-        await asyncio.to_thread(future.result, self.init_timeout)
+        for spec in self.strategy_specs:
+            strategy_name = spec["strategy_name"]
+            future = cta_engine.init_strategy(strategy_name)
+            await asyncio.to_thread(future.result, self.init_timeout)
 
-        strategy = cta_engine.strategies[strategy_name]
-        if not strategy.inited:
-            raise RuntimeError(f"{strategy_name} init did not complete")
-        self.state["strategy_inited"] = True
-        self.write_state()
+            strategy = cta_engine.strategies[strategy_name]
+            if not strategy.inited:
+                raise RuntimeError(f"{strategy_name} init did not complete")
+            self.state["strategies"][strategy_name]["inited"] = True
+            self.state["strategy_inited"] = all(
+                item.get("inited") for item in self.state["strategies"].values()
+            )
+            self.write_state()
 
-        cta_engine.start_strategy(strategy_name)
-        if not strategy.trading:
-            raise RuntimeError(f"{strategy_name} did not start")
-        self.state["strategy_trading"] = True
-        self.write_state()
+            cta_engine.start_strategy(strategy_name)
+            if not strategy.trading:
+                raise RuntimeError(f"{strategy_name} did not start")
+            self.state["strategies"][strategy_name]["trading"] = True
+            self.state["strategy_trading"] = all(
+                item.get("trading") for item in self.state["strategies"].values()
+            )
+            self.write_state()
+
+    async def init_and_start_strategy(self) -> None:
+        """Initialize and start managed strategies with legacy method name."""
+        await self.init_and_start_strategies()
 
     async def run_backtest_report(self):
         """运行回测并生成报告"""
@@ -516,7 +652,7 @@ class AutoTradingSystem:
             # 创建回测引擎
             engine = BacktestingEngine()
 
-            strategy_config = self.config["strategy"]
+            strategy_config = self.strategy_specs[0]
             backtest_config = self.config["backtest"]
             backtest_strategy_setting = build_backtest_strategy_setting(
                 strategy_config,
@@ -631,8 +767,9 @@ class AutoTradingSystem:
             self.setup_strategy()
 
             # 5. 启动策略
-            await self.init_and_start_strategy()
-            self.wait_for_tick(get_strategy_spec(self.config)["vt_symbol"], timeout=self.tick_timeout)
+            await self.init_and_start_strategies()
+            for spec in self.strategy_specs:
+                self.wait_for_tick(spec["vt_symbol"], timeout=self.tick_timeout)
 
             print("\n✅ 系统启动完成！")
             if self.telegram.enabled:
@@ -655,6 +792,8 @@ class AutoTradingSystem:
     async def stop(self):
         """停止系统"""
         self.state["strategy_trading"] = False
+        for item in self.state.get("strategies", {}).values():
+            item["trading"] = False
         self.write_state()
 
         # 发送每日报告

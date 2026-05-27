@@ -18,6 +18,8 @@ class DummyEngine:
         self.orders: list[tuple[Direction, Offset, float, float, bool]] = []
         self.logs: list[str] = []
         self.history_bars: list[BarData] = []
+        self.return_orderids: bool = True
+        self.size: float = 1
 
     def send_order(
         self,
@@ -31,6 +33,8 @@ class DummyEngine:
         net: bool,
     ) -> list[str]:
         self.orders.append((direction, offset, price, volume, stop))
+        if not self.return_orderids:
+            return []
         return [str(len(self.orders))]
 
     def cancel_all(self, strategy: ChanStrategy) -> None:
@@ -41,6 +45,9 @@ class DummyEngine:
 
     def get_engine_type(self) -> EngineType:
         return EngineType.BACKTESTING
+
+    def get_size(self, strategy: ChanStrategy) -> float:
+        return self.size
 
     def put_strategy_event(self, strategy: ChanStrategy) -> None:
         return
@@ -182,6 +189,7 @@ def test_chan_strategy_sends_buy_on_confirmed_signal() -> None:
         "sizing_mode": "fixed",
         "target_ratio": 0.05,
         "risk_per_trade": 0.01,
+        "contract_size": 1,
         "candidate_index": 1,
         "confirmed_index": 2,
         "stop_price": 8,
@@ -229,6 +237,19 @@ def test_chan_strategy_respects_max_position() -> None:
     assert "超过最大仓位" in engine.logs[-1]
 
 
+def test_chan_strategy_logs_entry_order_failure_without_marking_signal_done() -> None:
+    strategy, engine = _strategy({"fixed_size": 2})
+    engine.return_orderids = False
+    strategy.analyzer = FakeAnalyzer([_snapshot(_signal())])
+
+    strategy.on_bar(_bar(0, 10))
+
+    assert engine.orders == [(Direction.LONG, Offset.OPEN, 10, 2, False)]
+    assert strategy.active_stop_price == 0
+    assert strategy.last_signal_key == ""
+    assert "下单失败" in engine.logs[-1]
+
+
 def test_chan_strategy_uses_risk_per_trade_sizing_for_buy() -> None:
     strategy, engine = _strategy(
         {
@@ -247,7 +268,42 @@ def test_chan_strategy_uses_risk_per_trade_sizing_for_buy() -> None:
     assert engine.orders == [(Direction.LONG, Offset.OPEN, 100_000, 0.001, False)]
     assert strategy.latest_chan_signal["sizing_mode"] == "risk_per_trade"
     assert strategy.latest_chan_signal["risk_per_trade"] == 0.01
+    assert strategy.latest_chan_signal["contract_size"] == 1
     assert strategy.latest_chan_signal["sizing"]["unit_risk"] == 99_992
+
+
+def test_chan_strategy_risk_per_trade_sizing_uses_contract_size() -> None:
+    strategy, engine = _strategy(
+        {
+            "sizing_mode": "risk_per_trade",
+            "risk_per_trade": 0.1,
+            "capital": 10_000,
+            "max_position": 0,
+            "max_position_ratio": 0.5,
+            "min_volume": 0.001,
+            "volume_step": 0.001,
+        }
+    )
+    engine.size = 0.01
+    signal = BuySignal(
+        id=0,
+        type=BuyPointType.FIRST_BUY,
+        candidate_index=1,
+        confirmed_index=2,
+        stop_price=76_500,
+        reason="test signal",
+    )
+    strategy.analyzer = FakeAnalyzer([_snapshot(signal)])
+
+    strategy.on_bar(_bar(0, 77_114.2))
+
+    assert engine.orders[0][:3] == (Direction.LONG, Offset.OPEN, 77_114.2)
+    assert engine.orders[0][3] == pytest.approx(6.483)
+    assert engine.orders[0][4] is False
+    assert strategy.latest_chan_signal["sizing"]["target_volume"] == pytest.approx(6.483)
+    assert strategy.latest_chan_signal["sizing"]["order_value"] == pytest.approx(4999.313586)
+    assert strategy.latest_chan_signal["sizing"]["unit_risk"] == pytest.approx(6.142)
+    assert strategy.latest_chan_signal["contract_size"] == 0.01
 
 
 def test_chan_strategy_risk_per_trade_signal_only_records_sizing_without_order() -> None:

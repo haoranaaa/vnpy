@@ -27,6 +27,9 @@ VeighNa is a Python 3.12 quant trading framework. Keep this as a short index; pu
 - Core gate: `docs/strategy_testing_pipeline.md`.
 - Sparse live fills: `docs/troubleshooting/strategy-live-trade-gap-diagnostics.md`.
 - Chan adapter: `tools/chan_runtime_diagnostics.py`; generic method lives in the playbook above.
+- CTA strategies must route live/order-capable submissions through the shared execution helper in `vnpy_ctastrategy/execution.py` or an equivalent reviewed wrapper, so order ids, failed submissions, risk vetoes, and operator notifications stay consistent across strategies.
+- New automated strategies must emit observable signal, sizing, order result, and failure evidence before enabling live orders.
+- Daily strategy review artifacts live under `var/strategy_reviews/YYYY-MM-DD/`; the task must collect runtime state, process metrics, result metrics, candidate recommendations, and backtest evidence without automatically mutating live config.
 - Acceptance: `./.venv/bin/python tools/strategy_acceptance.py --strategy chan --gate all`
 - DoubleMA acceptance: `./.venv/bin/python tools/strategy_acceptance.py --strategy double_ma --gate all`
 

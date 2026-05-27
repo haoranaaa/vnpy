@@ -8,8 +8,6 @@ import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 
 def _make_bot(tmp_path: Path, timeout: float = 2.0, mode: str = "approval_required"):
     cfg = {
@@ -19,6 +17,19 @@ def _make_bot(tmp_path: Path, timeout: float = 2.0, mode: str = "approval_requir
     }
     cfg_path = tmp_path / "cfg.json"
     cfg_path.write_text(json.dumps(cfg))
+
+    with patch("telegram_notifier.Bot") as fake_bot_cls:
+        fake_bot_cls.return_value = MagicMock()
+        from telegram_notifier import TelegramTradeBot
+
+        tb = TelegramTradeBot(str(cfg_path))
+    tb.send_message = AsyncMock()
+    return tb
+
+
+def _make_bot_with_config(tmp_path: Path, config: dict):
+    cfg_path = tmp_path / "cfg.json"
+    cfg_path.write_text(json.dumps(config))
 
     with patch("telegram_notifier.Bot") as fake_bot_cls:
         fake_bot_cls.return_value = MagicMock()
@@ -115,6 +126,30 @@ def test_approval_disabled_auto_approves(tmp_path: Path) -> None:
     assert asyncio.run(scenario()) is True
 
 
+def test_approval_disabled_overrides_approval_required_mode(tmp_path: Path) -> None:
+    bot = _make_bot_with_config(
+        tmp_path,
+        {
+            "telegram": {"bot_token": "fake-token", "chat_id": "12345"},
+            "approval": {"enabled": False, "timeout_seconds": 2.0},
+            "notification": {"mode": "approval_required"},
+        },
+    )
+
+    async def scenario():
+        start = time.monotonic()
+        approved = await bot.send_trade_signal("T7", _signal_info("T7"))
+        elapsed = time.monotonic() - start
+        return approved, elapsed
+
+    approved, elapsed = asyncio.run(scenario())
+
+    assert bot.mode == "notify_only"
+    assert approved is True
+    assert elapsed < 0.2
+    assert "T7" not in bot.pending_approvals
+
+
 def test_notify_only_sends_signal_without_waiting(tmp_path: Path) -> None:
     bot = _make_bot(tmp_path, mode="notify_only")
 
@@ -178,7 +213,14 @@ def test_generic_strategy_signal_message_escapes_html() -> None:
             "bar_datetime": "2026-05-22T12:00:00+08:00",
             "bar_close_price": 0.12,
             "trade_enabled": False,
+            "contract_size": 0.01,
             "reason": "回踩 < 中枢上沿 > 后确认",
+            "sizing": {
+                "target_volume": 0.064,
+                "order_volume": 0.064,
+                "order_value": 4935.3088,
+                "reason": "max_position_ratio",
+            },
         },
     )
 
@@ -186,6 +228,23 @@ def test_generic_strategy_signal_message_escapes_html() -> None:
     assert "信号模式" in msg
     assert "third_buy" in msg
     assert "回踩 &lt; 中枢上沿 &gt; 后确认" in msg
+    assert "下单数量: 0.064" in msg
+    assert "合约乘数: 0.01" in msg
+    assert "名义金额: 4935.3088" in msg
+
+
+def test_runtime_error_message_escapes_html() -> None:
+    from telegram_notifier import format_runtime_error_message
+
+    msg = format_runtime_error_message(
+        "Chan<Auto>",
+        "BTCUSDT_SWAP_OKX.GLOBAL",
+        "socket is already closed <private>",
+    )
+
+    assert "自动交易异常" in msg
+    assert "Chan&lt;Auto&gt;" in msg
+    assert "socket is already closed &lt;private&gt;" in msg
 
 
 def test_shared_notifier_submit_uses_running_loop(tmp_path: Path) -> None:

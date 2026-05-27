@@ -47,6 +47,8 @@ Required evidence:
 - protective stops
 - reverse exits
 - max position checks
+- live-capable order submissions use the shared execution helper and record
+  accepted order ids or standardized failure logs
 
 ### 4. Backtest
 
@@ -83,6 +85,17 @@ Required evidence:
 - logs and health snapshots
 - manual review decision
 
+### 7. Daily Review
+
+Required evidence:
+
+- runtime state snapshot
+- order, trade, rejection, exception, and reconnect metrics
+- latest signal sizing and cap reason
+- backtest result for the reviewed strategy
+- non-mutating candidate recommendations
+- review artifacts written under `var/strategy_reviews/YYYY-MM-DD/`
+
 ## Local Acceptance Command
 
 Use:
@@ -106,6 +119,22 @@ For the current Chan automation adapter, use:
 The script compares local runtime state, live order logs, and recent public OKX
 1m signal replay. It is a concrete implementation of the generic diagnostic
 flow, not the only accepted method.
+
+For the daily runtime/result review, use:
+
+```bash
+.venv/bin/python tools/daily_strategy_review.py --strategy chan
+```
+
+On macOS, install the local launchd schedule with:
+
+```bash
+scripts/install_daily_strategy_review.sh
+```
+
+The scheduled task runs at 23:30 local time and writes JSON plus Markdown
+artifacts. It may recommend candidate changes, but it must not mutate live
+strategy configuration automatically.
 
 ## Promotion Rule
 
