@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import asyncio
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -24,6 +25,20 @@ from run_auto_trading import (
     validate_strategy_safety,
 )
 from vnpy.trader.setting import SETTINGS
+
+
+@pytest.fixture(autouse=True)
+def isolate_auto_trading_runtime_files(monkeypatch, tmp_path: Path):
+    """Keep runtime state files from touching the user's ~/.vntrader directory."""
+    import run_auto_trading
+
+    runtime_dir = tmp_path / ".vntrader"
+    runtime_dir.mkdir()
+    monkeypatch.setattr(
+        run_auto_trading,
+        "get_file_path",
+        lambda filename: runtime_dir / filename,
+    )
 
 
 def test_auto_trading_uses_telegram_strategy_class() -> None:
